@@ -65,25 +65,46 @@ async function main() {
       .on('end', async () => {
         console.log(`Found ${businesses.length} businesses to process`);
         
-        // Process each business
+        // Process each business and create separate entries for each email
+        const businessesWithEmails = [];
         let processedCount = 0;
+        
         for (const business of businesses) {
           processedCount++;
           console.log(`\n[${processedCount}/${businesses.length}] Processing: ${business.name}`);
           
           if (business.website && business.website.trim() !== '') {
             console.log(`  → Extracting emails from: ${business.website}`);
-            business.emails = await getEmailsFromWebsite(business.website);
-            console.log(`  → Found emails: ${business.emails || 'None'}`);
+            const emails = await getEmailsFromWebsite(business.website);
+            
+            if (emails && emails.length > 0) {
+              console.log(`  → Found ${emails.length} valid email(s): ${emails.join(', ')}`);
+              
+              // Create separate entry for each email (max 2 unique emails)
+              emails.forEach(email => {
+                const businessCopy = { ...business };
+                businessCopy.emails = email;
+                businessesWithEmails.push(businessCopy);
+              });
+            } else {
+              console.log(`  → No valid emails found`);
+              // Still include the business but with empty email
+              const businessCopy = { ...business };
+              businessCopy.emails = '';
+              businessesWithEmails.push(businessCopy);
+            }
           } else {
-            business.emails = '';
             console.log(`  → No website available`);
+            const businessCopy = { ...business };
+            businessCopy.emails = '';
+            businessesWithEmails.push(businessCopy);
           }
         }
         
         // Write to new CSV file
-        await writeCsvWithEmails(businesses, outputCsvPath);
+        await writeCsvWithEmails(businessesWithEmails, outputCsvPath);
         console.log(`\n✅ Completed! Results saved to: ${outputCsvPath}`);
+        console.log(`📊 Total entries created: ${businessesWithEmails.length} (from ${businesses.length} original businesses)`);
         resolve();
       })
       .on('error', (error) => {
@@ -129,16 +150,33 @@ async function getEmailsFromWebsite(websiteUrl) {
     // Combine and deduplicate emails
     const allEmails = [...new Set([...emails, ...textEmails])];
     
-    // Filter out common non-business emails
+    if (allEmails.length > 0) {
+      console.log(`    Found ${allEmails.length} email(s): ${allEmails.join(', ')}`);
+    }
+    
+    // Filter out common non-business emails and wixpress/sentry emails
     const filteredEmails = allEmails.filter(email => {
       const lowerEmail = email.toLowerCase();
       return !lowerEmail.includes('example.com') && 
              !lowerEmail.includes('test.com') &&
              !lowerEmail.includes('placeholder') &&
+             !lowerEmail.includes('wixpress.com') &&
+             !lowerEmail.includes('sentry.io') &&
+             !lowerEmail.includes('sentry.wixpress.com') &&
+             !lowerEmail.includes('sentry-next.wixpress.com') &&
+             !lowerEmail.includes('@sentry') &&  // catch any sentry domain
              lowerEmail.length > 5;
     });
     
-    return filteredEmails.join(', ');
+    // Show what was filtered out
+    const filteredOut = allEmails.filter(email => !filteredEmails.includes(email));
+    if (filteredOut.length > 0) {
+      console.log(`    Filtered out: ${filteredOut.join(', ')}`);
+    }
+    
+    // Return up to 2 unique emails
+    const uniqueEmails = [...new Set(filteredEmails)];
+    return uniqueEmails.slice(0, 2);
     
   } catch (error) {
     console.log(`    Error extracting from ${websiteUrl}: ${error.message}`);
